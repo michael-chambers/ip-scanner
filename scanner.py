@@ -1,46 +1,54 @@
 import requests
 import logging
-import sys
-from dns import reversename
 
-LOG = logging.getLogger("ip-scanner")
-stdout_handler = logging.StreamHandler(sys.stdout)
-stdout_handler.setLevel(logging.DEBUG)
-stdout_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-stdout_handler.setFormatter(stdout_formatter)
-LOG.addHandler(stdout_handler)
+logger = logging.getLogger("ip-scanner")
+logger.setLevel(logging.DEBUG)
+console = logging.StreamHandler()
+logger.addHandler(console)
 
+# TODO parameterize these values
 IP_ADDRESS = "127.0.0.1"
 IIS_VERSION = "7.0"
-NGINX_VERSION = "1.2"
+NGINX_VERSION = "1.25"
 
 
 def scanner(ip):
-    result = {
-        "ip_address": ip,
-        "server": "N/A",
-        "version": "N/A",
-        "directory": False
-    }
+    autoindex = False
+
+    # TODO deal with potential errors, such as connectivity issues
     response = requests.get("http://" + ip)
-
-    # directory = bool
     if response.status_code == 200 and '<title>Index of /</title>' in response.text:
-        result.update({"directory": True})
-
+        autoindex = True
     if "server" in response.headers:
-        server_string = response.headers["server"]
-        try:
-            server, version = server_string.split("/")
-            if version:
-                result.update({"server": server})
-                result.update({"version": version})
-        except ValueError:
-            result.update({"server": server_string})
-    else:
-        result.append(ip, "N/A", "N/A", sep='\t')
-    return result
+        server = response.headers["server"]
+
+    return server, autoindex
 
 
-print("IP Address", "Server", "Version", "Directory")
-print(scanner(IP_ADDRESS))
+server_string, directory_listing = scanner(IP_ADDRESS)
+dir_listing_ips = list()
+server_version_ips = list()
+server = str()
+version = str()
+
+if server_string:
+    try:
+        server, version = server_string.split("/")
+    except ValueError:
+        server = server_string
+        logger.debug(f"Could not determine web server version for {IP_ADDRESS}")
+
+if directory_listing:
+    dir_listing_ips.append(IP_ADDRESS)
+
+if server.lower() == "nginx" and version \
+        and version.startswith(NGINX_VERSION + "."):
+    server_version_ips.append([IP_ADDRESS, server + "/" + version])
+elif server.lower() == ("microsoft-iis") and version \
+        and version.startswith(IIS_VERSION):
+    server_version_ips.append([IP_ADDRESS, server + "/" + version])
+
+print("IPs with directory listing at root level")
+print(dir_listing_ips)
+print(f"IPs matching server version parameters (Microsoft-IIS/{IIS_VERSION} or Nginx/{NGINX_VERSION}.x)")
+print(server_version_ips)
