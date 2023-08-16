@@ -4,7 +4,7 @@ This tool scans IP addresses to find servers running specified versions of IIS o
 
 Because many sites do not respond to their IP address, the ability to specify a URL is also included. This is not performed automatically (via reverse DNS lookup), as that too frequently does not resolve to a routable website, but rather a server name used by the site's provider.
 
-The tool is a single, Python-based executable. Results are outputted to the console. Options are specified via command line arguments, as explained below. They can also be found by running `scanner --help`
+The tool is a single, Python-based, Windows executable. Results are outputted to the console. Options are specified via command line arguments, as explained below. They can also be found by running `scanner.exe --help`
 
 > `--help, -h` show the help message
 >
