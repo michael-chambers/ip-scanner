@@ -14,23 +14,30 @@ console.setFormatter(formatter)
 logger.addHandler(console)
 
 
-def make_request(address: str) -> Tuple[str, str]:
+def make_request(address: str, ip: bool) -> Tuple[str, str, bool]:
     autoindex = False
     server = ""
+    version = ""
+    server_string = ""
 
-    # TODO deal with potential errors, such as connectivity issues
     try:
         logger.debug(f"attempting to connect to {address}")
-        response = requests.get("http://" + address)
-        logger.debug(f"successfully connected to {address}")
+        if ip:
+            response = requests.get("http://" + address)
+        else:
+            response = requests.get(address)
+        if response:
+            logger.debug(f"successfully connected to {address}")
+        else:
+            raise requests.ConnectionError
         if response.status_code == 200 and '<title>Index of /</title>' in response.text:
             autoindex = True
             logger.debug(f"directory listing discovered at {address}")
         else:
             logger.debug(f"no directory listing found for {address}")
         if "server" in response.headers:
-            server = response.headers["server"]
-            logger.debug(f"server header for {address}: {server}")
+            server_string = response.headers["server"]
+            logger.debug(f"server header for {address}: {server_string}")
         else:
             logger.debug(f"no server HTTP header returned for {address}")
     except (ConnectionRefusedError, requests.ConnectionError):
@@ -38,7 +45,14 @@ def make_request(address: str) -> Tuple[str, str]:
     except requests.Timeout:
         logger.error(f"timed-out while attempting to connection to {address}")
 
-    return server, autoindex
+    if server_string:
+        try:
+            server, version = server_string.split("/")
+        except ValueError:
+            server = server_string
+            logger.warning(f"Could not determine web server version for {address}")
+
+    return server, version, autoindex
 
 
 def validate_ip(ip_address: str) -> bool:
@@ -50,38 +64,13 @@ def validate_ip(ip_address: str) -> bool:
         return False
 
 
-def scanner(range: list, iis_version: str, nginx_version: str):
-    dir_listing_ips = []
-    server_version_ips = []
-
-    for ip in range:
-        server = str()
-        version = str()
-        server_string, directory_listing = make_request(ip)
-
-        if server_string:
-            try:
-                server, version = server_string.split("/")
-            except ValueError:
-                server = server_string
-                logger.warning(f"Could not determine web server version for {ip}")
-
-        if directory_listing:
-            dir_listing_ips.append(ip)
-
-        if server.lower() == "nginx" and version \
-                and version.startswith(nginx_version + "."):
-            server_version_ips.append([ip, server + "/" + version])
-        elif server.lower() == ("microsoft-iis") and version \
-                and version.startswith(iis_version):
-            server_version_ips.append([ip, server + "/" + version])
-
-    logger.info("### IPs with directory listing at root level ###")
-    for d in dir_listing_ips:
-        logger.info(d)
-    logger.info(f"### IPs matching server version parameters (Microsoft-IIS/{iis_version} or Nginx/{nginx_version}.x ###)")
-    for s in server_version_ips:
-        logger.info(f"{s[0]}  {s[1]}")
+def validate_url(url: str) -> bool:
+    match = re.search("^((http|https)://)[-a-zA-Z0-9@:%._\\+~#?&=]{2,256}.[a-z]{2,6}$", url)
+    if match:
+        return True
+    else:
+        logger.error(f"{url} is not a valid URL for this tool, must include protocol and no subdirectories, skipping")
+        return False
 
 
 def init_argparse():
@@ -91,7 +80,7 @@ def init_argparse():
             IIS web servers, as well as find directory listings at the root level"
     )
     parser.add_argument(
-        "--debug", "-d", help="turn on debug mode", action="store_true"
+        "--debug", "-d", action="store_true", help="turn on debug mode"
     )
     parser.add_argument(
         "--iis", help="IIS version to search for (default 7.0)", default="7.0"
@@ -108,11 +97,26 @@ def init_argparse():
     parser.add_argument(
         "--end-ip", help="last IP address in a range"
     )
+    parser.add_argument(
+        "--url", "-u", action="append", help="a fully-qualified URL to scan (e.g. http://www.example.com), can be used multiple times"
+    )
     return parser
 
 
 def main():
+    def process_results(address):
+        if directory_listing:
+            dir_listing_ips.append(address)
+
+        if server.lower() == "nginx" and version \
+                and version.startswith(nginx_version + "."):
+            server_version_ips.append([address, server + "/" + version])
+        elif server.lower() == ("microsoft-iis") and version \
+                and version.startswith(iis_version):
+            server_version_ips.append([address, server + "/" + version])
+
     range = []
+    urls = []
 
     parser = init_argparse()
     args = parser.parse_args()
@@ -142,7 +146,32 @@ def main():
                 range.append(ip_addr)
     logger.debug(f"selected IPs: {range}")
 
-    scanner(range, iis_version, nginx_version)
+    if args.url:
+        for u in args.url:
+            if validate_url(u):
+                urls.append(u)
+
+    dir_listing_ips = []
+    server_version_ips = []
+
+    for ip in range:
+        server = ""
+        version = ""
+        server, version, directory_listing = make_request(ip, True)
+        process_results(ip)
+
+    for url in urls:
+        server = ""
+        version = ""
+        server, version, directory_listing = make_request(url, False)
+        process_results(url)
+
+    logger.info("### IPs/URLs with directory listing at root level ###")
+    for d in dir_listing_ips:
+        logger.info(d)
+    logger.info(f"### IPs/URLs matching server version parameters (Microsoft-IIS/{iis_version} or Nginx/{nginx_version}.x ###)")
+    for s in server_version_ips:
+        logger.info(f"{s[0]}  {s[1]}")
 
 
 if __name__ == "__main__":
